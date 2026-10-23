@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ draws a system launch screen first; keep it the same black as the logo. -->
+    <style name="Theme.ViyanX.Splash" parent="Theme.ViyanX">
+        <item name="android:windowBackground">@color/vx_splash_background</item>
+        <item name="android:windowSplashScreenBackground">@color/vx_splash_background</item>
+    </style>
+</resources>

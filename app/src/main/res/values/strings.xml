@@ -1,3 +1,7 @@
 <resources>
-    <string name="app_name">viyanX</string>
+    <string name="app_name">VIYANX</string>
+    <string name="splash_logo_description">VIYANX. Create without limits.</string>
+    <string name="splash_skip_hint">Tap to skip</string>
+    <string name="home_title">VIYANX</string>
+    <string name="home_subtitle">Home screen coming soon</string>
 </resources>

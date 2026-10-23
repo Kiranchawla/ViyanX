@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/splash_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/vx_splash_background"
+    android:clickable="true"
+    android:focusable="true"
+    android:contentDescription="@string/splash_skip_hint">
+
+    <ImageView
+        android:id="@+id/splash_logo"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:padding="24dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/vx_logo"
+        android:contentDescription="@string/splash_logo_description" />
+
+    <View
+        android:id="@+id/splash_glow_violet"
+        android:layout_width="320dp"
+        android:layout_height="320dp"
+        android:layout_gravity="center_vertical|start"
+        android:layout_marginStart="-120dp"
+        android:background="@drawable/splash_glow_violet"
+        android:importantForAccessibility="no" />
+
+    <View
+        android:id="@+id/splash_glow_lime"
+        android:layout_width="320dp"
+        android:layout_height="320dp"
+        android:layout_gravity="center_vertical|end"
+        android:layout_marginEnd="-120dp"
+        android:background="@drawable/splash_glow_lime"
+        android:importantForAccessibility="no" />
+
+    <View
+        android:id="@+id/splash_progress"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:layout_gravity="bottom"
+        android:layout_marginStart="48dp"
+        android:layout_marginEnd="48dp"
+        android:layout_marginBottom="56dp"
+        android:background="@drawable/splash_progress"
+        android:importantForAccessibility="no" />
+</FrameLayout>
