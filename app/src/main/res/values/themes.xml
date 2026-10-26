@@ -1,14 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- Dark app theme. Platform Material parent, so no extra dependency is needed yet. -->
-    <style name="Theme.ViyanX" parent="android:Theme.Material.NoActionBar">
+    <!-- Light app theme. Platform Material parent, so no extra dependency is needed yet. -->
+    <style name="Theme.ViyanX" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">@color/vx_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
     </style>
 
     <style name="Theme.ViyanX.Splash" parent="Theme.ViyanX">
         <item name="android:windowBackground">@color/vx_splash_background</item>
+        <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

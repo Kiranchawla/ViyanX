@@ -17,7 +17,7 @@ import android.view.animation.LinearInterpolator;
 
 /**
  * Slow launch animation: glow rises, the logo fades and scales in, a progress bar fills,
- * then the screen fades out into {@link MainActivity}. Tapping skips it.
+ * then the screen fades out into {@link HomeActivity}. Tapping skips it.
  */
 public class SplashActivity extends Activity {
 
@@ -123,7 +123,7 @@ public class SplashActivity extends Activity {
         if (sequence != null) {
             sequence.cancel();
         }
-        startActivity(new Intent(this, MainActivity.class));
+        startActivity(new Intent(this, HomeActivity.class));
         finish();
     }
 

@@ -1,9 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="vx_background">#0B0D12</color>
+    <!-- Fixed colours: the splash screen is always black, in light and dark mode. -->
     <color name="vx_splash_background">#000006</color>
+    <color name="vx_splash_accent">#C7F36B</color>
+    <color name="vx_on_primary">#FFFFFF</color>
+    <!-- The timeline is drawn over video, so its colours stay the same in light and dark mode. -->
+    <color name="vx_timeline_accent">#C7F36B</color>
+    <color name="vx_timeline_on_accent">#1A1A1A</color>
+
+    <!-- Light theme. values-night/colors.xml overrides these for dark mode. -->
+    <color name="vx_background">#F6F7FB</color>
+    <color name="vx_surface">#FFFFFF</color>
+    <color name="vx_surface_variant">#ECEEF5</color>
+    <color name="vx_border">#D5D9E4</color>
     <color name="vx_primary">#7C3AED</color>
-    <color name="vx_accent">#C7F36B</color>
-    <color name="vx_text_primary">#F5F7FA</color>
-    <color name="vx_text_secondary">#C0C3CE</color>
+    <color name="vx_brand">#7C3AED</color>
+    <color name="vx_accent">#4D7C0F</color>
+    <color name="vx_text_primary">#14161C</color>
+    <color name="vx_text_secondary">#484D5C</color>
+    <color name="vx_error">#C62839</color>
 </resources>

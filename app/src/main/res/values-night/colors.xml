@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="vx_background">#0B0D12</color>
+    <color name="vx_surface">#171922</color>
+    <color name="vx_surface_variant">#222530</color>
+    <color name="vx_border">#343744</color>
+    <color name="vx_primary">#7C3AED</color>
+    <color name="vx_brand">#8B5CF6</color>
+    <color name="vx_accent">#C7F36B</color>
+    <color name="vx_text_primary">#F5F7FA</color>
+    <color name="vx_text_secondary">#C0C3CE</color>
+    <color name="vx_error">#FF6B78</color>
+</resources>

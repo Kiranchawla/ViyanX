@@ -3,6 +3,6 @@
     <gradient
         android:angle="0"
         android:startColor="@color/vx_primary"
-        android:endColor="@color/vx_accent" />
+        android:endColor="@color/vx_splash_accent" />
     <corners android:radius="2dp" />
 </shape>
