@@ -12,6 +12,9 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.PickVisualMediaRequest;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -54,9 +57,14 @@ public class EditorActivity extends ComponentActivity {
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final FilmstripLoader filmstrip = new FilmstripLoader();
+    private final List<FilmstripLoader> filmstrips = new ArrayList<>(); // One per source video.
     private final EditHistory history = new EditHistory();
     private final Map<AspectRatio, TextView> ratioChips = new EnumMap<>(AspectRatio.class);
+
+    // Registered at construction so it survives rotation while the picker is open.
+    private final ActivityResultLauncher<PickVisualMediaRequest> pickClip =
+            registerForActivityResult(
+                    new ActivityResultContracts.PickVisualMedia(), this::onClipPicked);
 
     private ProjectStore store;
     private SharedPreferences prefs;
@@ -78,6 +86,10 @@ public class EditorActivity extends ComponentActivity {
     private View setStartButton;
     private View setEndButton;
     private View resetButton;
+    private View duplicateButton;
+    private View addClipButton;
+    private View moveLeftButton;
+    private View moveRightButton;
     private View undoButton;
     private View redoButton;
     private View messageBar;
@@ -92,6 +104,9 @@ public class EditorActivity extends ComponentActivity {
     private long playhead; // Timeline position, used whenever the player isn't running.
     private boolean trimPreview; // True while a handle drag shows frames of the whole source.
     private boolean trimIsStart;
+    private int trimSource = -1; // Source video the trim preview is showing.
+    private Uri pendingClip; // Picked before the project finished loading.
+    private boolean addingClip;
     private boolean playlistReady; // True once the player holds one item per segment.
     private float videoRatio; // Width over height of the video itself, 0 until known.
     private int tool = TOOL_TRIM;
@@ -187,6 +202,10 @@ public class EditorActivity extends ComponentActivity {
         setStartButton = findViewById(R.id.btn_set_start);
         setEndButton = findViewById(R.id.btn_set_end);
         resetButton = findViewById(R.id.btn_reset);
+        duplicateButton = findViewById(R.id.btn_duplicate);
+        addClipButton = findViewById(R.id.btn_add_clip);
+        moveLeftButton = findViewById(R.id.btn_move_left);
+        moveRightButton = findViewById(R.id.btn_move_right);
         undoButton = findViewById(R.id.btn_undo);
         redoButton = findViewById(R.id.btn_redo);
         messageBar = findViewById(R.id.msg_bar);
@@ -215,6 +234,10 @@ public class EditorActivity extends ComponentActivity {
         setStartButton.setOnClickListener(v -> setEdgeFromPlayhead(true));
         setEndButton.setOnClickListener(v -> setEdgeFromPlayhead(false));
         resetButton.setOnClickListener(v -> resetEdit());
+        duplicateButton.setOnClickListener(v -> duplicateSelected());
+        addClipButton.setOnClickListener(v -> addClip());
+        moveLeftButton.setOnClickListener(v -> moveSelected(-1));
+        moveRightButton.setOnClickListener(v -> moveSelected(1));
 
         timelineView.setListener(new TimelineView.Listener() {
             @Override
@@ -235,7 +258,7 @@ public class EditorActivity extends ComponentActivity {
             @Override
             public void onTrimPreview(EditTimeline preview, int index, boolean isStart,
                     long sourcePositionMs) {
-                showTrimFrame(sourcePositionMs);
+                showTrimFrame(preview.get(index).source, sourcePositionMs);
                 trimIsStart = isStart;
                 updateInfo(preview, index);
                 timeText.setText(getString(R.string.time_position,
@@ -246,6 +269,11 @@ public class EditorActivity extends ComponentActivity {
             @Override
             public void onTrimFinished(EditTimeline result, int index) {
                 finishTrim(result, index);
+            }
+
+            @Override
+            public void onReorder(int from, int to) {
+                moveClip(from, to);
             }
 
             @Override
@@ -289,6 +317,11 @@ public class EditorActivity extends ComponentActivity {
         selectTool(tool);
         updateUndoRedo();
         showSaved(p.lastEdited);
+        if (pendingClip != null && sourceMs > 0) {
+            Uri uri = pendingClip;
+            pendingClip = null;
+            onClipPicked(uri);
+        }
     }
 
     private void showSaved(long when) {
@@ -393,7 +426,7 @@ public class EditorActivity extends ComponentActivity {
     /** One clipped media item per segment, so the player skips every deleted range. */
     private MediaItem itemFor(Segment segment) {
         return new MediaItem.Builder()
-                .setUri(Uri.parse(project.uri))
+                .setUri(Uri.parse(project.uriOf(segment.source)))
                 .setMediaId(segment.id)
                 .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(segment.startMs)
@@ -506,7 +539,7 @@ public class EditorActivity extends ComponentActivity {
         if (selectedId == null || timeline.indexOfId(selectedId) < 0) {
             selectedId = timeline.isEmpty() ? null : timeline.get(0).id;
         }
-        timelineView.setSourceDuration(duration);
+        timelineView.setSourceLengths(project.sourceLengths(duration));
         if (history.isEmpty()) {
             history.reset(currentState());
         }
@@ -562,6 +595,10 @@ public class EditorActivity extends ComponentActivity {
         setEnabledLook(setStartButton, inside);
         setEnabledLook(setEndButton, inside);
         setEnabledLook(resetButton, on && isEdited());
+        setEnabledLook(duplicateButton, hasSelection);
+        setEnabledLook(addClipButton, on);
+        setEnabledLook(moveLeftButton, hasSelection && index > 0);
+        setEnabledLook(moveRightButton, hasSelection && index < timeline.size() - 1);
         if (!trimPreview) {
             updateInfo(timeline, index);
         }
@@ -574,8 +611,8 @@ public class EditorActivity extends ComponentActivity {
 
     /** True if anything has been cut away from the full video. */
     private boolean isEdited() {
-        return !(timeline.size() == 1 && timeline.get(0).startMs == 0
-                && timeline.get(0).endMs == sourceMs);
+        return !(timeline.size() == 1 && timeline.get(0).source == 0
+                && timeline.get(0).startMs == 0 && timeline.get(0).endMs == sourceMs);
     }
 
     private void splitAtPlayhead() {
@@ -630,8 +667,8 @@ public class EditorActivity extends ComponentActivity {
             return;
         }
         long source = timeline.toSource(playhead);
-        EditTimeline trimmed = isStart ? timeline.trimStart(index, source, sourceMs)
-                : timeline.trimEnd(index, source, sourceMs);
+        EditTimeline trimmed = isStart ? timeline.trimStart(index, source)
+                : timeline.trimEnd(index, source, project.sourceLengths(sourceMs));
         if (trimmed.equals(timeline)) {
             showMessage(getString(R.string.trim_limit,
                     DurationFormat.formatPrecise(EditTimeline.MIN_SEGMENT_MS)));
@@ -645,6 +682,118 @@ public class EditorActivity extends ComponentActivity {
                 DurationFormat.formatPrecise(timeline.get(index).length())));
     }
 
+    private void duplicateSelected() {
+        int index = selectedIndex();
+        if (index < 0) {
+            showMessage(getString(R.string.duplicate_select_first));
+            return;
+        }
+        String copyId = EditTimeline.newId();
+        timeline = timeline.duplicate(index, copyId);
+        selectedId = copyId;
+        commitEdit(timeline.startOf(index + 1));
+        showMessage(getString(R.string.duplicate_done));
+    }
+
+    private void moveSelected(int step) {
+        int index = selectedIndex();
+        if (index < 0) {
+            showMessage(getString(R.string.move_select_first));
+            return;
+        }
+        moveClip(index, index + step);
+    }
+
+    /** Puts a clip at a new position. The clip stays selected and the playhead goes to its start. */
+    private void moveClip(int from, int to) {
+        EditTimeline moved = timeline.move(from, to);
+        if (moved.equals(timeline)) {
+            refreshEditUi();
+            return;
+        }
+        if (player != null) {
+            player.pause();
+        }
+        timeline = moved;
+        selectedId = timeline.get(to).id;
+        commitEdit(timeline.startOf(to));
+        showMessage(getString(R.string.move_done, to + 1, timeline.size()));
+    }
+
+    private void addClip() {
+        if (project == null || sourceMs <= 0 || !readable || addingClip) {
+            showMessage(getString(R.string.add_clip_wait));
+            return;
+        }
+        if (player != null) {
+            player.pause();
+        }
+        pickClip.launch(new PickVisualMediaRequest.Builder()
+                .setMediaType(ActivityResultContracts.PickVisualMedia.VideoOnly.INSTANCE)
+                .build());
+    }
+
+    /** A video was picked: read its length off the main thread, then put all of it on the timeline. */
+    private void onClipPicked(Uri uri) {
+        if (uri == null) {
+            return; // Picker closed without a choice.
+        }
+        if (project == null || sourceMs <= 0) {
+            pendingClip = uri; // Added as soon as the project has loaded.
+            return;
+        }
+        try {
+            getContentResolver().takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (SecurityException | UnsupportedOperationException ignored) {
+            // Usable this session; a later open may report it as unavailable.
+        }
+        addingClip = true;
+        final String name = VideoProbe.displayName(this, uri);
+        io.execute(() -> {
+            final long length = VideoProbe.read(this, uri).durationMs;
+            runOnUiThread(() -> {
+                addingClip = false;
+                if (!isDestroyed()) {
+                    insertClip(uri, length, name);
+                }
+            });
+        });
+    }
+
+    private void insertClip(Uri uri, long length, String name) {
+        if (length < EditTimeline.MIN_SEGMENT_MS) {
+            showMessage(getString(R.string.add_clip_failed));
+            return;
+        }
+        // Reuse the entry if this video is already in the project, so it is only stored once.
+        int source = -1;
+        for (int i = 0; i < project.sourceCount(); i++) {
+            if (project.uriOf(i).equals(uri.toString())) {
+                source = i;
+                break;
+            }
+        }
+        boolean isNew = source < 0;
+        if (isNew) {
+            project.extraSources.add(new Project.Source(uri.toString(), length));
+            source = project.sourceCount() - 1;
+        }
+        int selected = selectedIndex();
+        int at = selected >= 0 ? selected + 1 : timeline.size();
+        String id = EditTimeline.newId();
+        timeline = timeline.insert(at, new Segment(id, source, 0, length));
+        selectedId = id;
+        long[] lengths = project.sourceLengths(sourceMs);
+        timelineView.setSourceLengths(lengths);
+        if (isNew) {
+            startFilmstrip(source, length, timelineView.suggestedFrameCount());
+        }
+        commitEdit(timeline.startOf(at));
+        showMessage(getString(R.string.add_clip_done,
+                name != null ? name : DurationFormat.formatPrecise(length)));
+    }
+
     private void resetEdit() {
         if (sourceMs <= 0 || !isEdited()) {
             return;
@@ -656,14 +805,15 @@ public class EditorActivity extends ComponentActivity {
     }
 
     /** Shows the source frame at the edge being dragged, like scrubbing the original video. */
-    private void showTrimFrame(long sourcePositionMs) {
+    private void showTrimFrame(int source, long sourcePositionMs) {
         if (player == null) {
             return;
         }
-        if (!trimPreview) {
+        if (!trimPreview || trimSource != source) {
             trimPreview = true;
+            trimSource = source;
             player.pause();
-            player.setMediaItem(MediaItem.fromUri(Uri.parse(project.uri)));
+            player.setMediaItem(MediaItem.fromUri(Uri.parse(project.uriOf(source))));
             player.prepare();
         }
         player.seekTo(0, sourcePositionMs);
@@ -749,7 +899,7 @@ public class EditorActivity extends ComponentActivity {
             return;
         }
         int oldIndex = selectedIndex();
-        timeline = state.timeline.sanitized(sourceMs);
+        timeline = state.timeline.sanitized(project.sourceLengths(sourceMs));
         project.ratio = state.ratioId;
         applyRatio(AspectRatio.fromId(state.ratioId));
         if (selectedId == null || timeline.indexOfId(selectedId) < 0) {
@@ -822,9 +972,22 @@ public class EditorActivity extends ComponentActivity {
             return;
         }
         int count = timelineView.suggestedFrameCount();
-        timelineView.prepareFrames(count);
-        filmstrip.load(this, Uri.parse(project.uri), sourceMs, count,
-                timelineView.trackHeightPx(), timelineView::setFrame);
+        long[] lengths = project.sourceLengths(sourceMs);
+        for (int source = 0; source < lengths.length; source++) {
+            startFilmstrip(source, lengths[source], count);
+        }
+    }
+
+    private void startFilmstrip(int source, long length, int count) {
+        if (length <= 0 || project.uriOf(source).isEmpty()) {
+            return;
+        }
+        while (filmstrips.size() <= source) {
+            filmstrips.add(new FilmstripLoader());
+        }
+        timelineView.prepareFrames(source, count);
+        filmstrips.get(source).load(this, Uri.parse(project.uriOf(source)), length, count,
+                timelineView.trackHeightPx(), (index, frame) -> timelineView.setFrame(source, index, frame));
     }
 
     private void showMessage(String message) {
@@ -891,7 +1054,9 @@ public class EditorActivity extends ComponentActivity {
     protected void onDestroy() {
         super.onDestroy();
         handler.removeCallbacksAndMessages(null);
-        filmstrip.shutdown();
+        for (FilmstripLoader loader : filmstrips) {
+            loader.shutdown();
+        }
         io.shutdown(); // Lets a queued save finish, then stops.
     }
 }

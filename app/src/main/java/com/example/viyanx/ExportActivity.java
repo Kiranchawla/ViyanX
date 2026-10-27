@@ -61,6 +61,7 @@ public class ExportActivity extends ComponentActivity {
 
     private Project project;
     private EditTimeline timeline;
+    private float originalAspect; // Shape of the first clip, read when several videos are mixed.
     private AspectRatio ratio;
 
     private Transformer transformer;
@@ -130,8 +131,19 @@ public class ExportActivity extends ComponentActivity {
         io.execute(() -> {
             final Project loaded = projectId == null ? null
                     : ProjectStore.get(this).find(projectId);
-            final boolean canOpen = loaded != null
-                    && VideoProbe.canOpen(this, Uri.parse(loaded.uri));
+            boolean open = loaded != null;
+            // Every video the edit uses must still be readable, not only the first one.
+            for (int i = 0; open && i < loaded.sourceCount(); i++) {
+                open = VideoProbe.canOpen(this, Uri.parse(loaded.uriOf(i)));
+            }
+            final boolean canOpen = open;
+            if (open) {
+                EditTimeline edit = loaded.loadTimeline(loaded.durationMs);
+                if (!edit.isEmpty()) {
+                    originalAspect = VideoProbe.displayAspect(this,
+                            Uri.parse(loaded.uriOf(edit.get(0).source)));
+                }
+            }
             runOnUiThread(() -> {
                 if (!isDestroyed()) {
                     onProjectLoaded(loaded, canOpen);
@@ -216,6 +228,16 @@ public class ExportActivity extends ComponentActivity {
         handler.post(pollProgress);
     }
 
+    private boolean usesSeveralSources() {
+        int first = timeline.get(0).source;
+        for (Segment segment : timeline.segments()) {
+            if (segment.source != first) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The retained segments, in timeline order, as one sequence. Nothing else is included. */
     private Composition buildComposition() {
         List<Effect> video = new ArrayList<>();
@@ -223,12 +245,17 @@ public class ExportActivity extends ComponentActivity {
             // Fit inside the chosen shape with bars, the same way the preview frames the video.
             video.add(Presentation.createForAspectRatio(ratio.value,
                     Presentation.LAYOUT_SCALE_TO_FIT));
+        } else if (originalAspect > 0 && usesSeveralSources()) {
+            // Clips from different videos may differ in shape. Keep the first clip's shape and
+            // fit the rest inside it, rather than letting the sizes clash.
+            video.add(Presentation.createForAspectRatio(originalAspect,
+                    Presentation.LAYOUT_SCALE_TO_FIT));
         }
         Effects effects = new Effects(Collections.emptyList(), video);
         EditedMediaItemSequence.Builder sequence = new EditedMediaItemSequence.Builder();
         for (Segment segment : timeline.segments()) {
             MediaItem item = new MediaItem.Builder()
-                    .setUri(Uri.parse(project.uri))
+                    .setUri(Uri.parse(project.uriOf(segment.source)))
                     .setClippingConfiguration(new MediaItem.ClippingConfiguration.Builder()
                             .setStartPositionMs(segment.startMs)
                             .setEndPositionMs(segment.endMs)

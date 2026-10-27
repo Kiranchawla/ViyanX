@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * The edit: an ordered list of {@link Segment}s cut from one source video. Source times say what
- * part of the video a segment shows; timeline times say where it sits in the edited result.
+ * The edit: an ordered list of {@link Segment}s cut from the project's source videos. Source times
+ * say what part of a video a segment shows; timeline times say where it sits in the edited result.
  * Deleting a segment closes the gap, so later segments move earlier on the timeline while their
  * source times stay the same. Instances never change; every edit returns a new timeline.
  * Pure Java so the rules can be unit tested.
@@ -142,8 +142,8 @@ final class EditTimeline {
         Segment s = segments.get(index);
         long cut = s.startMs + (timelineMs - startOf(index));
         List<Segment> list = new ArrayList<>(segments);
-        list.set(index, new Segment(s.id, s.startMs, cut));
-        list.add(index + 1, new Segment(rightId, cut, s.endMs));
+        list.set(index, new Segment(s.id, s.source, s.startMs, cut));
+        list.add(index + 1, new Segment(rightId, s.source, cut, s.endMs));
         return new EditTimeline(list);
     }
 
@@ -157,21 +157,66 @@ final class EditTimeline {
         return new EditTimeline(list);
     }
 
+    /** Puts an independent copy of segment {@code index} right after it. */
+    EditTimeline duplicate(int index, String copyId) {
+        if (index < 0 || index >= segments.size()) {
+            return this;
+        }
+        List<Segment> list = new ArrayList<>(segments);
+        list.add(index + 1, segments.get(index).withId(copyId));
+        return new EditTimeline(list);
+    }
+
+    /** Moves segment {@code from} so that it ends up at position {@code to}. */
+    EditTimeline move(int from, int to) {
+        if (from < 0 || from >= segments.size() || to < 0 || to >= segments.size() || from == to) {
+            return this;
+        }
+        List<Segment> list = new ArrayList<>(segments);
+        list.add(to, list.remove(from));
+        return new EditTimeline(list);
+    }
+
+    /** Inserts a segment so that it becomes {@code index} (0 = first, size() = last). */
+    EditTimeline insert(int index, Segment segment) {
+        if (index < 0 || index > segments.size() || segment.length() <= 0) {
+            return this;
+        }
+        List<Segment> list = new ArrayList<>(segments);
+        list.add(index, segment);
+        return new EditTimeline(list);
+    }
+
     /**
-     * The earliest source time segment {@code index} may start at. Segments never overlap in the
-     * source, so it can grow back into a range that was deleted but not into a neighbour.
+     * The earliest source time segment {@code index} may start at. A segment that directly follows
+     * an earlier part of the same video cannot grow back into it; otherwise (after a duplicate or
+     * across different videos) the video's own start is the limit.
      */
     long minStart(int index) {
-        return index > 0 ? segments.get(index - 1).endMs : 0;
+        Segment s = segments.get(index);
+        if (index > 0) {
+            Segment before = segments.get(index - 1);
+            if (before.source == s.source && before.endMs <= s.startMs) {
+                return before.endMs;
+            }
+        }
+        return 0;
     }
 
     /** The latest source time segment {@code index} may end at. */
-    long maxEnd(int index, long sourceDurationMs) {
-        return index < segments.size() - 1 ? segments.get(index + 1).startMs : sourceDurationMs;
+    long maxEnd(int index, long[] sourceLengths) {
+        Segment s = segments.get(index);
+        if (index < segments.size() - 1) {
+            Segment after = segments.get(index + 1);
+            if (after.source == s.source && after.startMs >= s.endMs) {
+                return after.startMs;
+            }
+        }
+        return s.source >= 0 && s.source < sourceLengths.length ? sourceLengths[s.source] : s.endMs;
     }
 
     /** Moves the start of segment {@code index} to this source time, within the allowed range. */
-    EditTimeline trimStart(int index, long sourceMs, long sourceDurationMs) {
+    EditTimeline trimStart(int index, long sourceMs) {
         if (index < 0 || index >= segments.size()) {
             return this;
         }
@@ -183,12 +228,12 @@ final class EditTimeline {
     }
 
     /** Moves the end of segment {@code index} to this source time, within the allowed range. */
-    EditTimeline trimEnd(int index, long sourceMs, long sourceDurationMs) {
+    EditTimeline trimEnd(int index, long sourceMs, long[] sourceLengths) {
         if (index < 0 || index >= segments.size()) {
             return this;
         }
         Segment s = segments.get(index);
-        long max = Math.max(s.startMs, maxEnd(index, sourceDurationMs));
+        long max = Math.max(s.startMs, maxEnd(index, sourceLengths));
         long min = Math.min(max, s.startMs + Math.min(MIN_SEGMENT_MS, s.length()));
         long end = Math.max(min, Math.min(max, sourceMs));
         return replace(index, s.withRange(s.startMs, end));
@@ -202,14 +247,15 @@ final class EditTimeline {
 
     // ---- Saving ------------------------------------------------------------------------
 
-    /** Text form for the project file and undo history: {@code id,start,end;id,start,end}. */
+    /** Text form for the project file and undo history: {@code id,start,end,source;...}. */
     String serialize() {
         StringBuilder out = new StringBuilder();
         for (Segment s : segments) {
             if (out.length() > 0) {
                 out.append(';');
             }
-            out.append(s.id).append(',').append(s.startMs).append(',').append(s.endMs);
+            out.append(s.id).append(',').append(s.startMs).append(',').append(s.endMs)
+                    .append(',').append(s.source);
         }
         return out.toString();
     }
@@ -223,11 +269,13 @@ final class EditTimeline {
         if (!text.isEmpty()) {
             for (String part : text.split(";", -1)) {
                 String[] f = part.split(",", -1);
-                if (f.length != 3 || f[0].isEmpty()) {
+                // Older projects wrote three fields: they only knew about the first video.
+                if ((f.length != 3 && f.length != 4) || f[0].isEmpty()) {
                     return null;
                 }
                 try {
-                    list.add(new Segment(f[0], Long.parseLong(f[1]), Long.parseLong(f[2])));
+                    int source = f.length == 4 ? Integer.parseInt(f[3]) : 0;
+                    list.add(new Segment(f[0], source, Long.parseLong(f[1]), Long.parseLong(f[2])));
                 } catch (NumberFormatException e) {
                     return null;
                 }
@@ -237,18 +285,20 @@ final class EditTimeline {
     }
 
     /**
-     * Repairs a timeline read from disk: drops empty or out-of-range pieces and anything that
-     * overlaps or runs backwards, so a damaged file can never produce an invalid export.
+     * Repairs a timeline read from disk: drops pieces that are empty, come from an unknown video or
+     * lie outside it, so a damaged file can never produce an invalid export. Pieces may repeat the
+     * same range, because a clip can be duplicated.
      */
-    EditTimeline sanitized(long sourceDurationMs) {
+    EditTimeline sanitized(long[] sourceLengths) {
         List<Segment> list = new ArrayList<>();
-        long floor = 0;
         for (Segment s : segments) {
-            long start = Math.max(floor, s.startMs);
-            long end = Math.min(sourceDurationMs, s.endMs);
+            if (s.source < 0 || s.source >= sourceLengths.length) {
+                continue;
+            }
+            long start = Math.max(0, s.startMs);
+            long end = Math.min(sourceLengths[s.source], s.endMs);
             if (end > start) {
-                list.add(new Segment(s.id, start, end));
-                floor = end;
+                list.add(new Segment(s.id, s.source, start, end));
             }
         }
         return new EditTimeline(list);

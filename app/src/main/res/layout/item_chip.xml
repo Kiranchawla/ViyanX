@@ -6,6 +6,8 @@
     android:background="@drawable/bg_chip"
     android:clickable="true"
     android:focusable="true"
+    android:drawablePadding="8dp"
+    android:drawableTint="@color/vx_text_primary"
     android:gravity="center"
     android:minHeight="48dp"
     android:paddingStart="18dp"

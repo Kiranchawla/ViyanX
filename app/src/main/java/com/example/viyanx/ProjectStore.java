@@ -112,6 +112,7 @@ final class ProjectStore {
         Project copy = new Project(newId, newName, source.uri, source.durationMs, source.ratio,
                 source.template, source.tool, now, now, newThumb);
         copy.segments = source.segments;
+        copy.extraSources.addAll(source.extraSources);
         copy.trimStartMs = source.trimStartMs;
         copy.trimEndMs = source.trimEndMs;
         add(copy);

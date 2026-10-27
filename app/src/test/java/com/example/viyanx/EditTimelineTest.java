@@ -14,6 +14,7 @@ public class EditTimelineTest {
 
     private static final long S = 1000;
     private static final long SOURCE = 60 * S;
+    private static final long[] LENGTHS = {SOURCE};
 
     private static EditTimeline sixty() {
         return EditTimeline.whole(SOURCE);
@@ -131,7 +132,7 @@ public class EditTimelineTest {
 
     @Test
     public void trimmingStartChangesTheSourceRange() {
-        EditTimeline t = abcd().trimStart(2, 25 * S, SOURCE);
+        EditTimeline t = abcd().trimStart(2, 25 * S);
         assertEquals(25 * S, t.get(2).startMs);
         assertEquals(35 * S, t.get(2).endMs);
         assertEquals(55 * S, t.durationMs());
@@ -139,7 +140,7 @@ public class EditTimelineTest {
 
     @Test
     public void trimmingEndChangesTheSourceRange() {
-        EditTimeline t = abcd().trimEnd(2, 30 * S, SOURCE);
+        EditTimeline t = abcd().trimEnd(2, 30 * S, LENGTHS);
         assertEquals(30 * S, t.get(2).endMs);
         assertEquals(55 * S, t.durationMs());
     }
@@ -148,26 +149,26 @@ public class EditTimelineTest {
     public void trimCannotCrossNeighboursOrTheSource() {
         EditTimeline t = abcd();
         // C cannot start before B ends, which would repeat frames B already shows.
-        assertEquals(20 * S, t.trimStart(2, 12 * S, SOURCE).get(2).startMs);
-        assertEquals(35 * S, t.trimEnd(2, 50 * S, SOURCE).get(2).endMs);
-        assertEquals(0, t.trimStart(0, -5 * S, SOURCE).get(0).startMs);
-        assertEquals(60 * S, t.trimEnd(3, 90 * S, SOURCE).get(3).endMs);
+        assertEquals(20 * S, t.trimStart(2, 12 * S).get(2).startMs);
+        assertEquals(35 * S, t.trimEnd(2, 50 * S, LENGTHS).get(2).endMs);
+        assertEquals(0, t.trimStart(0, -5 * S).get(0).startMs);
+        assertEquals(60 * S, t.trimEnd(3, 90 * S, LENGTHS).get(3).endMs);
     }
 
     @Test
     public void trimCanGrowBackIntoADeletedRange() {
         EditTimeline t = abcd().delete(1); // A 0-10, C 20-35, D 35-60
-        EditTimeline grown = t.trimStart(1, 12 * S, SOURCE);
+        EditTimeline grown = t.trimStart(1, 12 * S);
         assertEquals(12 * S, grown.get(1).startMs); // Allowed down to the end of A (10 s).
-        assertEquals(10 * S, t.trimStart(1, 0, SOURCE).get(1).startMs);
+        assertEquals(10 * S, t.trimStart(1, 0).get(1).startMs);
     }
 
     @Test
     public void trimKeepsTheMinimumLength() {
         EditTimeline t = abcd();
         long min = EditTimeline.MIN_SEGMENT_MS;
-        assertEquals(10 * S - min, t.trimStart(0, 10 * S, SOURCE).get(0).startMs);
-        assertEquals(min, t.trimEnd(0, 0, SOURCE).get(0).endMs);
+        assertEquals(10 * S - min, t.trimStart(0, 10 * S).get(0).startMs);
+        assertEquals(min, t.trimEnd(0, 0, LENGTHS).get(0).endMs);
     }
 
     @Test
@@ -181,14 +182,126 @@ public class EditTimelineTest {
     }
 
     @Test
+    public void oldThreeFieldTextReadsAsTheFirstVideo() {
+        EditTimeline t = EditTimeline.parse("a,0,5000;b,6000,9000");
+        assertEquals(0, t.get(1).source);
+        assertEquals(6000, t.get(1).startMs);
+    }
+
+    @Test
+    public void duplicateInsertsAnIndependentCopyAfterTheClip() {
+        EditTimeline t = abcd().duplicate(1, "B2");
+        assertEquals(5, t.size());
+        assertEquals("B", t.get(1).id);
+        assertEquals("B2", t.get(2).id);
+        assertEquals(t.get(1).startMs, t.get(2).startMs);
+        assertEquals(t.get(1).endMs, t.get(2).endMs);
+        assertEquals(70 * S, t.durationMs());
+        assertEquals(20 * S, t.startOf(2));
+        EditTimeline empty = abcd().delete(0).delete(0).delete(0).delete(0);
+        assertSame(empty, empty.duplicate(0, "x"));
+    }
+
+    @Test
+    public void duplicateCanBeTrimmedWithoutEatingItsOriginal() {
+        EditTimeline t = abcd().duplicate(1, "B2"); // B 10-20, B2 10-20
+        assertEquals(12 * S, t.trimStart(2, 12 * S).get(2).startMs);
+        assertEquals(40 * S, t.trimEnd(1, 40 * S, LENGTHS).get(1).endMs); // Free: the copy repeats B.
+    }
+
+    @Test
+    public void duplicatesSurviveSanitizing() {
+        EditTimeline t = abcd().duplicate(1, "B2");
+        assertEquals(t, t.sanitized(LENGTHS));
+    }
+
+    @Test
+    public void insertedClipFromAnotherVideoKeepsItsSource() {
+        EditTimeline t = abcd().insert(2, new Segment("N", 1, 0, 8 * S));
+        assertEquals(5, t.size());
+        assertEquals("N", t.get(2).id);
+        assertEquals(1, t.get(2).source);
+        assertEquals(68 * S, t.durationMs());
+        assertEquals(20 * S, t.startOf(2));
+        assertEquals(t, EditTimeline.parse(t.serialize()));
+        assertEquals(1, EditTimeline.parse(t.serialize()).get(2).source);
+    }
+
+    @Test
+    public void clipsFromDifferentVideosDoNotLimitEachOther() {
+        EditTimeline t = new EditTimeline(Arrays.asList(
+                new Segment("a", 0, 0, 10 * S), new Segment("b", 1, 0, 20 * S)));
+        long[] lengths = {60 * S, 30 * S};
+        assertEquals(0, t.trimStart(1, 0).get(1).startMs);
+        assertEquals(30 * S, t.trimEnd(1, 99 * S, lengths).get(1).endMs); // Its own video's end.
+        assertEquals(60 * S, t.trimEnd(0, 99 * S, lengths).get(0).endMs);
+    }
+
+    @Test
+    public void moveReordersWithoutChangingContentOrLength() {
+        EditTimeline t = abcd().move(0, 2); // B C A D
+        assertEquals("B C A D", ids(t));
+        assertEquals(60 * S, t.durationMs());
+        assertEquals(10 * S, t.get(2).endMs); // A keeps its source range.
+        assertEquals(25 * S, t.startOf(2));   // B 10 + C 15 come before it.
+        assertEquals("A B C D", ids(t.move(2, 0)));
+        assertEquals("A B D C", ids(abcd().move(3, 2)));
+        assertEquals("D A B C", ids(abcd().move(3, 0)));
+    }
+
+    @Test
+    public void moveIgnoresInvalidOrNoOpRequests() {
+        EditTimeline t = abcd();
+        assertSame(t, t.move(1, 1));
+        assertSame(t, t.move(-1, 2));
+        assertSame(t, t.move(0, 4));
+        assertSame(t, t.move(4, 0));
+    }
+
+    @Test
+    public void moveKeepsSourceVideoOfEachClip() {
+        EditTimeline t = new EditTimeline(Arrays.asList(
+                new Segment("a", 0, 0, 5 * S), new Segment("b", 1, 0, 8 * S))).move(1, 0);
+        assertEquals("b a", ids(t));
+        assertEquals(1, t.get(0).source);
+        assertEquals(t, EditTimeline.parse(t.serialize()));
+    }
+
+    private static String ids(EditTimeline t) {
+        StringBuilder out = new StringBuilder();
+        for (Segment s : t.segments()) {
+            if (out.length() > 0) {
+                out.append(' ');
+            }
+            out.append(s.id);
+        }
+        return out.toString();
+    }
+
+    @Test
+    public void splitKeepsTheSourceVideo() {
+        EditTimeline t = new EditTimeline(Arrays.asList(new Segment("b", 1, 0, 20 * S)))
+                .split(0, 5 * S, "r");
+        assertEquals(1, t.get(0).source);
+        assertEquals(1, t.get(1).source);
+    }
+
+    @Test
+    public void sanitizedDropsUnknownVideos() {
+        EditTimeline t = new EditTimeline(Arrays.asList(
+                new Segment("a", 0, 0, 10 * S), new Segment("b", 3, 0, 5 * S)));
+        assertEquals(1, t.sanitized(LENGTHS).size());
+    }
+
+    @Test
     public void sanitizedDropsInvalidPieces() {
         EditTimeline damaged = new EditTimeline(Arrays.asList(
                 new Segment("a", 5 * S, 2 * S),            // Backwards.
                 new Segment("b", 0, 10 * S),
-                new Segment("c", 8 * S, 20 * S),           // Overlaps b: start moves to 10.
+                new Segment("c", 8 * S, 20 * S),           // Overlap is allowed: clips can repeat.
                 new Segment("d", 70 * S, 80 * S)));        // Beyond the source.
-        EditTimeline fixed = damaged.sanitized(SOURCE);
-        assertEquals("0-10 10-20", range(fixed));
+        EditTimeline fixed = damaged.sanitized(LENGTHS);
+        assertEquals("0-10 8-20", range(fixed));
     }
 
     private static String range(EditTimeline t) {

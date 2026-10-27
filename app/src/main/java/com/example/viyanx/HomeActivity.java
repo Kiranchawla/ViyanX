@@ -303,6 +303,7 @@ public class HomeActivity extends ComponentActivity {
         for (QuickTool tool : QuickTool.values()) {
             TextView chip = (TextView) getLayoutInflater().inflate(R.layout.item_chip, row, false);
             chip.setText(tool.labelRes);
+            chip.setCompoundDrawablesRelativeWithIntrinsicBounds(tool.iconRes, 0, 0, 0);
             chip.setContentDescription(getString(R.string.quick_tool_description,
                     getString(tool.labelRes)));
             chip.setOnClickListener(v -> startFlow(tool, null));

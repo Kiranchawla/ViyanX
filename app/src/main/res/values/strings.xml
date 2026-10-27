@@ -187,4 +187,19 @@
     <string name="export_screen_title">Export</string>
     <string name="export_summary_heading">Your edit</string>
     <string name="export_summary_source">Source: %1$s</string>
+    <string name="duplicate_action">Duplicate</string>
+    <string name="duplicate_description">Duplicate the selected clip. The copy is placed right after it.</string>
+    <string name="duplicate_select_first">Tap a clip on the timeline to select it, then tap Duplicate.</string>
+    <string name="duplicate_done">Clip duplicated.</string>
+    <string name="add_clip_action">Add clip</string>
+    <string name="add_clip_description">Add another video to the timeline. It is placed after the selected clip.</string>
+    <string name="add_clip_done">Clip added: %1$s.</string>
+    <string name="add_clip_failed">That video couldn\'t be read, so it wasn\'t added.</string>
+    <string name="add_clip_wait">Wait for the video to load, then add a clip.</string>
+    <string name="move_left_action">Move left</string>
+    <string name="move_left_description">Move the selected clip one place earlier on the timeline.</string>
+    <string name="move_right_action">Move right</string>
+    <string name="move_right_description">Move the selected clip one place later on the timeline.</string>
+    <string name="move_select_first">Tap a clip on the timeline to select it, then move it.</string>
+    <string name="move_done">Clip moved to position %1$d of %2$d.</string>
 </resources>

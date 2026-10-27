@@ -50,6 +50,30 @@ final class VideoProbe {
         return new VideoProbe(duration, frame);
     }
 
+    /** Width over height as the video is shown (after rotation), or 0 if it can't be read. */
+    static float displayAspect(Context context, Uri uri) {
+        MediaMetadataRetriever retriever = new MediaMetadataRetriever();
+        try {
+            retriever.setDataSource(context, uri);
+            float w = Float.parseFloat(retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH));
+            float h = Float.parseFloat(retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT));
+            String rotation = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION);
+            int degrees = rotation == null ? 0 : Integer.parseInt(rotation);
+            return degrees == 90 || degrees == 270 ? h / w : w / h;
+        } catch (RuntimeException e) {
+            return 0;
+        } finally {
+            try {
+                retriever.release();
+            } catch (Exception ignored) {
+                // Nothing useful to do.
+            }
+        }
+    }
+
     static String displayName(Context context, Uri uri) {
         try (Cursor c = context.getContentResolver().query(
                 uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {

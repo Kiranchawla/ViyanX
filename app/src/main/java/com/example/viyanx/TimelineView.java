@@ -39,12 +39,16 @@ public class TimelineView extends View {
 
         /** The drag was interrupted; the timeline went back to how it was. */
         void onTrimCancelled();
+
+        /** A block was dragged to a new place: it should end up at index {@code to}. */
+        void onReorder(int from, int to);
     }
 
     private static final int NONE = 0;
     private static final int TRIM_START = 1;
     private static final int TRIM_END = 2;
     private static final int SCRUB = 3;
+    private static final int REORDER = 4;
 
     private static final long STEP_MS = 1000;
 
@@ -65,10 +69,10 @@ public class TimelineView extends View {
     private final float gap;
 
     private EditTimeline timeline = new EditTimeline(java.util.Collections.emptyList());
-    private long sourceDuration;
+    private long[] sourceLengths = new long[0];
     private int selected = -1;
     private long playhead;
-    private Bitmap[] frames = new Bitmap[0];
+    private Bitmap[][] frames = new Bitmap[0][];
     private String emptyText = "";
     private Listener listener;
 
@@ -80,6 +84,9 @@ public class TimelineView extends View {
     private EditTimeline dragPreview;
     private int dragIndex;
     private float dragScale; // Pixels per millisecond, fixed for the whole drag.
+    private int reorderFrom;
+    private float reorderX;
+    private final Runnable startReorder = this::beginReorder;
 
     public TimelineView(Context context) {
         this(context, null);
@@ -108,9 +115,12 @@ public class TimelineView extends View {
         emptyText = text;
     }
 
-    /** Length of the source video, which says which frame belongs where. */
-    void setSourceDuration(long durationMs) {
-        sourceDuration = Math.max(0, durationMs);
+    /** Length of each source video, by source number; says which frame belongs where. */
+    void setSourceLengths(long[] lengths) {
+        sourceLengths = lengths.clone();
+        if (frames.length < lengths.length) {
+            frames = java.util.Arrays.copyOf(frames, lengths.length);
+        }
         invalidate();
     }
 
@@ -149,14 +159,21 @@ public class TimelineView extends View {
         return Math.max(1, Math.round(getHeight() - bubbleArea));
     }
 
-    void prepareFrames(int count) {
-        frames = new Bitmap[Math.max(0, count)];
+    void prepareFrames(int source, int count) {
+        if (source < 0) {
+            return;
+        }
+        if (frames.length <= source) {
+            frames = java.util.Arrays.copyOf(frames, source + 1);
+        }
+        frames[source] = new Bitmap[Math.max(0, count)];
         invalidate();
     }
 
-    void setFrame(int index, Bitmap bitmap) {
-        if (index >= 0 && index < frames.length) {
-            frames[index] = bitmap;
+    void setFrame(int source, int index, Bitmap bitmap) {
+        if (source >= 0 && source < frames.length && frames[source] != null
+                && index >= 0 && index < frames[source].length) {
+            frames[source][index] = bitmap;
             invalidate();
         }
     }
@@ -247,6 +264,10 @@ public class TimelineView extends View {
             }
         }
 
+        if (mode == REORDER) {
+            drawReorder(canvas, accent);
+        }
+
         // Playhead.
         float x = mode == TRIM_START || mode == TRIM_END
                 ? xFor(playhead) : xFor(Math.min(playhead, timeline.durationMs()));
@@ -268,6 +289,75 @@ public class TimelineView extends View {
         }
     }
 
+    /** The lifted block following the finger, and a marker where it will land. */
+    private void drawReorder(Canvas canvas, int accent) {
+        blockRect(reorderFrom, block);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setColor(0x99000000); // The block's old place looks empty while it is lifted.
+        canvas.drawRect(block, paint);
+        float width = block.width();
+        float left = Math.max(trackLeft(), Math.min(trackRight() - width,
+                reorderX - width / 2));
+        block.set(left, trackTop(), left + width, getHeight());
+        drawBlock(canvas, reorderFrom, block, true, accent);
+
+        float marker = markerX(reorderTarget());
+        float w = 3 * density;
+        paint.setColor(accent);
+        canvas.drawRect(marker - w / 2, trackTop() - 4 * density, marker + w / 2,
+                getHeight(), paint);
+    }
+
+    /** Where the lifted block would end up: how many of the other blocks lie left of the finger. */
+    private int reorderTarget() {
+        float s = scale();
+        int target = 0;
+        for (int i = 0; i < timeline.size(); i++) {
+            if (i == reorderFrom) {
+                continue;
+            }
+            float center = trackLeft() + (timeline.startOf(i) + timeline.get(i).length() / 2f) * s;
+            if (center < reorderX) {
+                target++;
+            }
+        }
+        return target;
+    }
+
+    /** The x position of the gap before the {@code target}-th block of those that stay put. */
+    private float markerX(int target) {
+        float s = scale();
+        int seen = 0;
+        float x = trackLeft();
+        for (int i = 0; i < timeline.size() && seen < target; i++) {
+            if (i == reorderFrom) {
+                continue;
+            }
+            x = trackLeft() + timeline.endOf(i) * s;
+            seen++;
+        }
+        return x;
+    }
+
+    private void beginReorder() {
+        if (mode != SCRUB || moved || timeline.size() < 2) {
+            return;
+        }
+        int index = timeline.indexAt(msFor(downX));
+        if (index < 0) {
+            return;
+        }
+        mode = REORDER;
+        reorderFrom = index;
+        reorderX = downX;
+        selected = index;
+        performHapticFeedback(HapticFeedbackConstants.LONG_PRESS);
+        if (listener != null) {
+            listener.onSelect(index);
+        }
+        invalidate();
+    }
+
     private void drawBlock(Canvas canvas, int index, RectF r, boolean isSelected, int accent) {
         if (r.width() <= 0) {
             return;
@@ -281,7 +371,7 @@ public class TimelineView extends View {
         paint.setColor(ContextCompat.getColor(getContext(), R.color.vx_surface_variant));
         canvas.drawRect(r, paint);
         EditTimeline t = shown();
-        Segment segment = (mode != NONE && mode != SCRUB && index == dragIndex)
+        Segment segment = ((mode == TRIM_START || mode == TRIM_END) && index == dragIndex)
                 ? dragPreview.get(index) : t.get(index);
         drawFrames(canvas, r, segment);
         if (!isSelected) {
@@ -307,7 +397,13 @@ public class TimelineView extends View {
 
     /** Draws frames across the block, each taken from the part of the source shown there. */
     private void drawFrames(Canvas canvas, RectF r, Segment segment) {
-        int n = frames.length;
+        if (segment.source < 0 || segment.source >= frames.length
+                || segment.source >= sourceLengths.length || frames[segment.source] == null) {
+            return;
+        }
+        Bitmap[] strip = frames[segment.source];
+        long sourceDuration = sourceLengths[segment.source];
+        int n = strip.length;
         if (n == 0 || sourceDuration <= 0) {
             return;
         }
@@ -318,7 +414,7 @@ public class TimelineView extends View {
             float center = (i + 0.5f) / tiles;
             long sourceMs = segment.startMs + (long) (center * segment.length());
             int index = (int) Math.min(n - 1, Math.max(0, sourceMs * n / sourceDuration));
-            Bitmap b = frames[index];
+            Bitmap b = strip[index];
             if (b == null) {
                 continue;
             }
@@ -421,6 +517,7 @@ public class TimelineView extends View {
         mode = SCRUB;
         getParent().requestDisallowInterceptTouchEvent(true);
         scrubTo(x);
+        postDelayed(startReorder, ViewConfiguration.getLongPressTimeout());
         return true;
     }
 
@@ -434,8 +531,8 @@ public class TimelineView extends View {
             long delta = Math.round((x - downX) / dragScale);
             boolean isStart = mode == TRIM_START;
             EditTimeline preview = isStart
-                    ? dragBase.trimStart(dragIndex, base.startMs + delta, sourceDuration)
-                    : dragBase.trimEnd(dragIndex, base.endMs + delta, sourceDuration);
+                    ? dragBase.trimStart(dragIndex, base.startMs + delta)
+                    : dragBase.trimEnd(dragIndex, base.endMs + delta, sourceLengths);
             if (!preview.equals(dragPreview)) {
                 dragPreview = preview;
                 Segment now = preview.get(dragIndex);
@@ -448,14 +545,27 @@ public class TimelineView extends View {
         } else if (mode == SCRUB) {
             if (Math.abs(x - downX) > moveSlop) {
                 moved = true;
+                removeCallbacks(startReorder);
             }
             scrubTo(x);
+        } else if (mode == REORDER) {
+            reorderX = x;
+            invalidate();
         }
     }
 
     private void onUp(boolean completed) {
         int finished = mode;
         mode = NONE;
+        removeCallbacks(startReorder);
+        if (finished == REORDER) {
+            int to = reorderTarget();
+            invalidate();
+            if (completed && to != reorderFrom && listener != null) {
+                listener.onReorder(reorderFrom, to);
+            }
+            return;
+        }
         if (finished == TRIM_START || finished == TRIM_END) {
             EditTimeline result = completed ? dragPreview : dragBase;
             int index = dragIndex;
